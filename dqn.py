@@ -25,29 +25,19 @@ class DuelingNetwork(nn.Module):
         self.inp_size = inp_size
         self.hidden_size = hidden_size
 
-        self.fc_value = nn.Linear(self.inp_size, self.hidden_size)
-        self.relu_value = nn.ReLU()
+        self.fc_q = nn.Linear(self.inp_size, self.hidden_size)
+        self.relu = nn.ReLU()
 
-        self.fc_advantage = nn.Linear(self.inp_size, self.hidden_size)
-        self.relu_advantage = nn.ReLU()
-
-        self.value_stream = nn.Linear(self.hidden_size, 1)
-        self.advantage_stream = nn.Linear(self.hidden_size, self.n_actions)
+        self.fc_q_head = nn.Linear(self.hidden_size, self.n_actions)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         assert x.ndim == 2, x.shape  # (batch_size, n_features)
         # When calculating the mean advantage, please, remember, x is a batched input!
 
-        value = self.fc_value(x)
-        value = self.relu_value(value)
-        value = self.value_stream(value)
-
-        advantage = self.fc_advantage(x)
-        advantage = self.relu_advantage(advantage)
-        advantage = self.advantage_stream(advantage)
-
-        return value + advantage - advantage.mean(dim=1, keepdim=True)
-
+        q = self.fc_q(x)
+        q = self.relu(q)
+        q = self.fc_q_head(q).view(-1, self.n_actions)
+        return q
 
 class ClassifierDQN(nn.Module):
     """
@@ -74,46 +64,13 @@ class ClassifierDQN(nn.Module):
         return q
 
 
-class GradScalerFunctional(torch.autograd.Function):
-    """
-    A torch.autograd.Function works as Identity on forward pass
-    and scales the gradient by scale_factor on backward pass.
-    """
-    @staticmethod
-    def forward(ctx, input, scale_factor):
-        ctx.scale_factor = scale_factor
-        return input
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        scale_factor = ctx.scale_factor
-        grad_input = grad_output * scale_factor
-        return grad_input, None
-
-
-class GradScaler(nn.Module):
-    """
-    An nn.Module incapsulating GradScalerFunctional
-    """
-    def __init__(self, scale_factor: float):
-        super().__init__()
-        self.scale_factor = scale_factor
-
-    def forward(self, x):
-        return GradScalerFunctional.apply(x, self.scale_factor)
-
-
 class DQNAgent(nn.Module):
-    def __init__(self, state_shape, n_actions, epsilon=0):
+    def __init__(self, state_shape, n_actions, hidden_size, epsilon=0):
 
         super().__init__()
         self.epsilon = epsilon
         self.n_actions = n_actions
         self.state_shape = state_shape
-        self.scale_factor = 1.0 / np.sqrt(2.0)
-
-        # Define your network body here. Please make sure agent is fully contained here
-        # nn.Flatten() can be useful
 
         num_channels, cur_layer_img_w, cur_layer_img_h = self.state_shape
 
@@ -133,8 +90,7 @@ class DQNAgent(nn.Module):
         cur_layer_img_h = conv2d_size_out(cur_layer_img_h, kernel_size=3, stride=2)
 
         self.flatten = nn.Flatten()
-        self.scaler = GradScaler(scale_factor=self.scale_factor)
-        self.dueling = DuelingNetwork(n_actions, cur_layer_img_w * cur_layer_img_h * 64, 256)
+        self.dueling = DuelingNetwork(n_actions, cur_layer_img_w * cur_layer_img_h * 64, hidden_size=hidden_size)
 
 
     def forward(self, state_t):
@@ -153,7 +109,6 @@ class DQNAgent(nn.Module):
         x = self.relu3(x)
 
         x = self.flatten(x)
-        x = self.scaler(x)
 
         x = self.dueling(x)
 
@@ -192,7 +147,7 @@ class DQNAgent(nn.Module):
 
 
 class ClassifierDQNAgent(nn.Module):
-    def __init__(self, state_shape, n_actions, min_value: float, max_value: float, num_bins: int, epsilon=0):
+    def __init__(self, state_shape, n_actions, min_value: float, max_value: float, num_bins: int, hidden_size, epsilon=0):
         super().__init__()
         self.epsilon = epsilon
         self.n_actions = n_actions
@@ -201,9 +156,10 @@ class ClassifierDQNAgent(nn.Module):
         self.max_value = max_value 
         self.num_bins = num_bins
 
-        self.support = torch.linspace(min_value, max_value, num_bins + 1)
-        self.centers = (self.support[:-1] + self.support[1:]) / 2
-
+        support = torch.linspace(min_value, max_value, num_bins + 1)
+        centers = (support[:-1] + support[1:]) / 2
+        self.register_buffer("support", support)
+        self.register_buffer("centers", centers)
 
         num_channels, cur_layer_img_w, cur_layer_img_h = self.state_shape
         self.conv1 = nn.Conv2d(num_channels, 16, kernel_size=3, stride=2)
@@ -223,7 +179,7 @@ class ClassifierDQNAgent(nn.Module):
 
         self.flatten = nn.Flatten()
 
-        self.dqn = ClassifierDQN(n_actions, cur_layer_img_w * cur_layer_img_h * 64, 256, num_bins)
+        self.dqn = ClassifierDQN(n_actions, cur_layer_img_w * cur_layer_img_h * 64, num_bins=num_bins, hidden_size=hidden_size)
 
     def forward(self, state_t):
         """
@@ -256,7 +212,7 @@ class ClassifierDQNAgent(nn.Module):
     def get_qvalues(self, states: np.ndarray) -> np.ndarray:
         states = torch.tensor(states, device=self.device, dtype=torch.float)
         qvalues = self(states) 
-        qvalues = torch.sum(F.softmax(qvalues, dim=-1) * self.centers.to(self.device), dim=-1)
+        qvalues = torch.sum(F.softmax(qvalues, dim=-1) * self.centers, dim=-1)
 
         return qvalues.cpu().detach().numpy()
 
