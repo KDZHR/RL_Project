@@ -205,7 +205,7 @@ def train(config):
 
         if step % eval_freq == 0:
             mean_rw_history.append(evaluate(
-                make_env(clip_rewards=True, seed=step), agent, n_games=3 * 3, greedy=True)
+                make_env(seed=step), agent, n_games=3 * 3, greedy=True)
             )
             initial_state_q_values = agent.get_qvalues(
                 np.array([make_env(seed=step).reset()[0]])

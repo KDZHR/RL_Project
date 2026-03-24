@@ -18,8 +18,6 @@ class HLGaussLoss(nn.Module):
         )
 
     def forward(self, logits: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-        print(logits.shape)
-        print(target.shape)
         return F.cross_entropy(logits, self.transform_to_probs(target))
 
     def transform_to_probs(self, target: torch.Tensor) -> torch.Tensor:
@@ -103,17 +101,16 @@ def compute_td_ce_loss(states, actions, rewards, next_states, is_done,
 
     actions = torch.tensor(actions, device=device, dtype=torch.long)    # shape: [batch_size]
     rewards = torch.tensor(rewards, device=device, dtype=torch.float)  # shape: [batch_size]
-    # shape: [batch_size, *state_shape]
     next_states = torch.tensor(next_states, device=device, dtype=torch.float)
     is_done = torch.tensor(
         is_done.astype('float32'),
         device=device,
         dtype=torch.float
-    )  # shape: [batch_size]
+    )
     is_not_done = 1 - is_done
 
     # get q-values for all actions in current states
-    predicted_q_dist = agent(states) # [batch_size, n_actions, n_bins]
+    predicted_q_dist = agent(states) # [batch_size, n_actions]
     # compute q-values for all actions in next states
     with torch.no_grad():
         predicted_next_qvalues = torch.tensor(agent.get_qvalues(next_states), device=device)  # [batch_size, n_actions, n_bins]
