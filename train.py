@@ -126,6 +126,8 @@ def train(config, save_metrics=True, save_state=True):
     seed = config["seed"]
     stop_after_n_steps = config["stop_after_n_steps"] if config.get("stop_after_n_steps") else total_steps
     replay_buffer_size = config["replay_buffer_size"] if config.get("replay_buffer_size") else 10**5
+    td_loss_func = config["td_loss_func"]
+    model_type = config["model_type"]
 
     random.seed(seed)
     np.random.seed(seed)
@@ -136,8 +138,8 @@ def train(config, save_metrics=True, save_state=True):
     n_actions = env.action_space.n
     state, _ = env.reset()
 
-    agent = DQNAgent(state_shape, n_actions, epsilon=1).to(device)
-    target_network = DQNAgent(state_shape, n_actions).to(device)
+    agent = model_type(state_shape=state_shape, n_actions=n_actions, epsilon=1).to(device)
+    target_network = model_type(state_shape=state_shape, n_actions=n_actions).to(device)
     target_network.load_state_dict(agent.state_dict())
 
     print(f"Total parameters: {sum(p.numel() for p in agent.parameters())}")
@@ -183,7 +185,7 @@ def train(config, save_metrics=True, save_state=True):
         # train
         obs_batch, act_batch, reward_batch, next_obs_batch, is_done_batch = exp_replay.sample(batch_size)
 
-        loss = compute_td_loss(obs_batch, act_batch, reward_batch, next_obs_batch, is_done_batch,
+        loss = td_loss_func(obs_batch, act_batch, reward_batch, next_obs_batch, is_done_batch,
                             agent, target_network,
                             gamma=0.99,
                             device=device)

@@ -47,7 +47,32 @@ class DuelingNetwork(nn.Module):
         advantage = self.advantage_stream(advantage)
 
         return value + advantage - advantage.mean(dim=1, keepdim=True)
-        
+
+
+class ClassifierDQN(nn.Module):
+    """
+    Implement the Classifier DQN logic.
+    """
+    def __init__(self, n_actions, inp_size, hidden_size, num_bins) -> None:
+        super().__init__()
+        self.n_actions = n_actions
+        self.inp_size = inp_size
+        self.hidden_size = hidden_size
+        self.num_bins = num_bins
+
+        self.fc_q = nn.Linear(self.inp_size, self.hidden_size)
+        self.relu = nn.ReLU()
+
+        self.advantage_stream = nn.Linear(self.hidden_size, self.n_actions * self.num_bins)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        assert x.ndim == 2, x.shape  # (batch_size, n_features)
+
+        q = self.fc_q(x)
+        q = self.relu(q)
+        q = self.advantage_stream(q).view(-1, self.n_actions, self.num_bins)
+        return q
+
 
 class GradScalerFunctional(torch.autograd.Function):
     """
@@ -149,6 +174,91 @@ class DQNAgent(nn.Module):
         qvalues = self(states)
         return qvalues.cpu().detach().numpy()
 
+
+    def sample_actions_by_qvalues(self, qvalues: np.ndarray, greedy: bool = False) -> np.ndarray:
+        """pick actions given qvalues based on epsilon-greedy exploration strategy."""
+        batch_size, n_actions = qvalues.shape
+        eps = self.epsilon
+        
+        if not greedy and np.random.rand() < eps:
+            return np.random.choice(n_actions, size=batch_size)
+        else:
+            return np.argmax(qvalues, axis=1)
+
+
+    def sample_actions(self, states: np.ndarray, greedy: bool = False) -> np.ndarray:
+        qvalues = self.get_qvalues(states)
+        return self.sample_actions_by_qvalues(qvalues, greedy)
+
+
+class ClassifierDQNAgent(nn.Module):
+    def __init__(self, state_shape, n_actions, min_value: float, max_value: float, num_bins: int, epsilon=0):
+        super().__init__()
+        self.epsilon = epsilon
+        self.n_actions = n_actions
+        self.state_shape = state_shape
+        self.min_value = min_value
+        self.max_value = max_value 
+        self.num_bins = num_bins
+
+        self.support = torch.linspace(min_value, max_value, num_bins + 1)
+        self.centers = (self.support[:-1] + self.support[1:]) / 2
+
+
+        num_channels, cur_layer_img_w, cur_layer_img_h = self.state_shape
+        self.conv1 = nn.Conv2d(num_channels, 16, kernel_size=3, stride=2)
+        self.relu1 = nn.ReLU()
+        cur_layer_img_w = conv2d_size_out(cur_layer_img_w, kernel_size=3, stride=2)
+        cur_layer_img_h = conv2d_size_out(cur_layer_img_h, kernel_size=3, stride=2)
+
+        self.conv2 = nn.Conv2d(16, 32, kernel_size=3, stride=2)
+        self.relu2 = nn.ReLU()
+        cur_layer_img_w = conv2d_size_out(cur_layer_img_w, kernel_size=3, stride=2)
+        cur_layer_img_h = conv2d_size_out(cur_layer_img_h, kernel_size=3, stride=2)
+
+        self.conv3 = nn.Conv2d(32, 64, kernel_size=3, stride=2)
+        self.relu3 = nn.ReLU()
+        cur_layer_img_w = conv2d_size_out(cur_layer_img_w, kernel_size=3, stride=2)
+        cur_layer_img_h = conv2d_size_out(cur_layer_img_h, kernel_size=3, stride=2)
+
+        self.flatten = nn.Flatten()
+
+        self.dqn = ClassifierDQN(n_actions, cur_layer_img_w * cur_layer_img_h * 64, 256, num_bins)
+
+    def forward(self, state_t):
+        """
+        takes agent's observation (tensor), returns qvalues (tensor)
+        :param state_t: a batch of 4-frame buffers, shape = [batch_size, 4, h, w]
+        """
+        # Use your network to compute qvalues for given state
+        x = self.conv1(state_t)
+        x = self.relu1(x)
+
+        x = self.conv2(x)
+        x = self.relu2(x)
+
+        x = self.conv3(x)
+        x = self.relu3(x)
+
+        x = self.flatten(x)
+
+        x = self.dqn(x)
+
+        return x
+
+
+    @property
+    def device(self):
+        return next(self.parameters()).device
+
+
+    @torch.inference_mode()
+    def get_qvalues(self, states: np.ndarray) -> np.ndarray:
+        states = torch.tensor(states, device=self.device, dtype=torch.float)
+        qvalues = self(states) 
+        qvalues = torch.sum(F.softmax(qvalues, dim=-1) * self.centers.to(self.device), dim=-1)
+
+        return qvalues.cpu().detach().numpy()
 
     def sample_actions_by_qvalues(self, qvalues: np.ndarray, greedy: bool = False) -> np.ndarray:
         """pick actions given qvalues based on epsilon-greedy exploration strategy."""
