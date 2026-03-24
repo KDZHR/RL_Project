@@ -65,7 +65,7 @@ class ClassifierDQN(nn.Module):
 
 
 class DQNAgent(nn.Module):
-    def __init__(self, state_shape, n_actions, epsilon=0):
+    def __init__(self, state_shape, n_actions, hidden_size, epsilon=0):
 
         super().__init__()
         self.epsilon = epsilon
@@ -90,7 +90,7 @@ class DQNAgent(nn.Module):
         cur_layer_img_h = conv2d_size_out(cur_layer_img_h, kernel_size=3, stride=2)
 
         self.flatten = nn.Flatten()
-        self.dueling = DuelingNetwork(n_actions, cur_layer_img_w * cur_layer_img_h * 64, 256)
+        self.dueling = DuelingNetwork(n_actions, cur_layer_img_w * cur_layer_img_h * 64, hidden_size=hidden_size)
 
 
     def forward(self, state_t):
@@ -147,7 +147,7 @@ class DQNAgent(nn.Module):
 
 
 class ClassifierDQNAgent(nn.Module):
-    def __init__(self, state_shape, n_actions, min_value: float, max_value: float, num_bins: int, epsilon=0):
+    def __init__(self, state_shape, n_actions, min_value: float, max_value: float, num_bins: int, hidden_size, epsilon=0):
         super().__init__()
         self.epsilon = epsilon
         self.n_actions = n_actions
@@ -179,7 +179,7 @@ class ClassifierDQNAgent(nn.Module):
 
         self.flatten = nn.Flatten()
 
-        self.dqn = ClassifierDQN(n_actions, cur_layer_img_w * cur_layer_img_h * 64, 256, num_bins)
+        self.dqn = ClassifierDQN(n_actions, cur_layer_img_w * cur_layer_img_h * 64, num_bins=num_bins, hidden_size=hidden_size)
 
     def forward(self, state_t):
         """

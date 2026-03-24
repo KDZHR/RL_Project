@@ -208,7 +208,7 @@ def train(config):
                 make_env(seed=step), agent, n_games=3 * 3, greedy=True)
             )
             initial_state_q_values = agent.get_qvalues(
-                np.array([make_env(seed=step).reset()[0]])
+                np.array([make_env(clip_rewards=False, seed=step).reset()[0]])
             )
             initial_state_v_history.append(np.max(initial_state_q_values))
 
