@@ -8,6 +8,7 @@ dependencies = [
     "pip",
     "torch",
     "ipython",
+    "ipykernel",
     "matplotlib",
     "opencv-python",
     "scipy",
