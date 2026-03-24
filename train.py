@@ -1,25 +1,24 @@
+import os
+import cv2
+import torch
+import pickle
+import random
+import numpy as np
+import torch.nn as nn
 from tqdm import trange
 from IPython.display import clear_output
 import matplotlib.pyplot as plt
-
-from dqn import DQNAgent
-from replay_buffer import ReplayBuffer
-import utils
-import random
-import numpy as np
-import torch
-import torch.nn as nn
-
-from metrics import evaluate
-from losses import compute_td_loss
-
 from gymnasium import ObservationWrapper
 from gymnasium.spaces import Box
-import cv2
-import atari_wrappers
 import gymnasium as gym
 
+import utils
+import atari_wrappers
+from dqn import DQNAgent
+from metrics import evaluate
+from losses import compute_td_loss
 from framebuffer import FrameBuffer
+from replay_buffer import ReplayBuffer
 
 
 class PreprocessAtariObs(ObservationWrapper):
@@ -110,7 +109,7 @@ def make_env(clip_rewards=True, seed=None):
     return env
 
 
-def train(config):
+def train(config, save_metrics=True, save_state=True):
     timesteps_per_epoch = config["timesteps_per_epoch"]
     batch_size = config["batch_size"]
     total_steps = config["total_steps"]
@@ -125,7 +124,8 @@ def train(config):
     device = config["device"]
     n_lives = config["n_lives"]
     seed = config["seed"]
-    stop_after_n_steps = config["stop_after_n_steps"]
+    stop_after_n_steps = config["stop_after_n_steps"] if config.get("stop_after_n_steps") else total_steps
+    replay_buffer_size = config["replay_buffer_size"] if config.get("replay_buffer_size") else 10**5
     td_loss_func = config["td_loss_func"]
     model_type = config["model_type"]
 
@@ -150,7 +150,7 @@ def train(config):
     grad_norm_history = []
     initial_state_v_history = []
 
-    exp_replay = ReplayBuffer(10**5)
+    exp_replay = ReplayBuffer(replay_buffer_size)
     for i in range(100):
         if not utils.is_enough_ram(min_available_gb=0.1):
             print("""
@@ -205,7 +205,7 @@ def train(config):
 
         if step % eval_freq == 0:
             mean_rw_history.append(evaluate(
-                make_env(seed=step), agent, n_games=3 * 3, greedy=True)
+                make_env(clip_rewards=False, seed=step), agent, n_games=3 * 3, greedy=True)
             )
             initial_state_q_values = agent.get_qvalues(
                 np.array([make_env(clip_rewards=False, seed=step).reset()[0]])
@@ -239,19 +239,28 @@ def train(config):
             plt.plot(utils.smoothen(grad_norm_history))
             plt.grid()
             plt.show()
+    
+    if save_metrics:
+        os.makedirs(f"metrics/{config["save_dir"]}", exist_ok=True)
+        with open(f'metrics/{config["save_dir"]}/seed_{config["seed"]}.pkl', 'wb') as file:
+            pickle.dump({
+                "mean_rw_history": mean_rw_history,
+                "td_loss_history": td_loss_history,
+                "grad_norm_history": grad_norm_history,
+                "initial_state_v_history": initial_state_v_history,
+            }, file)
 
-    return {
-        "mean_rw_history": mean_rw_history,
-        "td_loss_history": td_loss_history,
-        "grad_norm_history": grad_norm_history,
-        "initial_state_v_history": initial_state_v_history,
-        "agent": agent,
-        "target_network": target_network,
-        "exp_replay": exp_replay,
-        "env": env,
-        "state_shape": state_shape,
-        "n_actions": n_actions,
-        "state": state,
-        "opt": opt,
-        "device": device,
-    }
+    if save_state:
+        os.makedirs(f"state/{config["save_dir"]}", exist_ok=True)
+        with open(f'state/{config["save_dir"]}/seed_{config["seed"]}.pkl', 'wb') as file:
+            pickle.dump({
+                "agent": agent,
+                "target_network": target_network,
+                "exp_replay": exp_replay,
+                "env": env,
+                "state_shape": state_shape,
+                "n_actions": n_actions,
+                "state": state,
+                "opt": opt,
+                "device": device,
+            }, file)
