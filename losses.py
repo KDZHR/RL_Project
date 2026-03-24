@@ -32,6 +32,44 @@ class HLGaussLoss(nn.Module):
     def transform_from_probs(self, probs: torch.Tensor) -> torch.Tensor:
         centers = (self.support[:-1] + self.support[1:]) / 2
         return torch.sum(probs * centers, dim=-1)
+    
+
+class TwoHotLoss(nn.Module):
+    def __init__(self, min_value: float, max_value: float, num_bins: int, device, sigma: float = None, ):
+        super().__init__()
+        self.min_value = min_value
+        self.max_value = max_value
+        self.num_bins = num_bins
+        self.support = torch.linspace(
+            min_value, max_value, num_bins + 1, dtype=torch.float32, device=device
+        )
+
+    def forward(self, logits: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        return F.cross_entropy(logits, self.transform_to_probs(target))
+
+    def transform_to_probs(self, target: torch.Tensor) -> torch.Tensor:
+        ln = (self.max_value - self.min_value) / self.num_bins
+
+        first_id = torch.clip(((target - self.min_value) // ln).to(torch.long), 0, self.num_bins - 2)
+        first_bin = self.min_value + (first_id) * ln + ln/2
+        second_bin = self.min_value + (first_id + 1) * ln + ln/2
+
+        # a + b = 1
+        # a * first_bin + b * second_bin = target
+        # (1 - b) * first_bin + b * second_bin = target
+        # first_bin + b * (second_bin - first_bin) = target
+        # b = (target - first_bin) / (second_bin - first_bin)
+        b = torch.clip((target - first_bin) / (second_bin - first_bin), 0, 1)
+        a = 1 - b
+        result = torch.zeros((target.shape[0], self.num_bins), device=target.device)
+        result[torch.arange(target.shape[0]), first_id] = a 
+        result[torch.arange(target.shape[0]), first_id + 1] = b
+        
+        return result
+
+    def transform_from_probs(self, probs: torch.Tensor) -> torch.Tensor:
+        centers = (self.support[:-1] + self.support[1:]) / 2
+        return torch.sum(probs * centers, dim=-1)
 
 
 def compute_td_loss(states, actions, rewards, next_states, is_done,
@@ -92,7 +130,7 @@ def compute_td_loss(states, actions, rewards, next_states, is_done,
 
 def compute_td_ce_loss(states, actions, rewards, next_states, is_done,
                     agent, target_agent,
-                    min_value: float, max_value: float, num_bins: int, sigma: float,
+                    min_value: float, max_value: float, num_bins: int, sigma: float, method,
                     gamma=0.99,
                     check_shapes=False,
                     device="cpu"):
@@ -126,7 +164,7 @@ def compute_td_ce_loss(states, actions, rewards, next_states, is_done,
     assert target_qvalues_for_actions.requires_grad == False, "do not send gradients to target!"
 
     # mean squared error loss to minimize
-    hl_loss = HLGaussLoss(min_value=min_value, max_value=max_value, num_bins=num_bins, sigma=sigma, device=device)
+    hl_loss = method(min_value=min_value, max_value=max_value, num_bins=num_bins, sigma=sigma, device=device)
     loss = hl_loss(predicted_q_dist_for_actions, target_qvalues_for_actions)
 
     if check_shapes:
