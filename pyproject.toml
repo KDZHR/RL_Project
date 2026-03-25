@@ -6,7 +6,7 @@ dependencies = [
     "ale-py==0.9.1",
     "gymnasium==0.29.1",
     "pip",
-    "torch",
+    "torch==2.8.0",
     "ipython",
     "ipykernel",
     "matplotlib",
